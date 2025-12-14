@@ -1,0 +1,146 @@
+"""Enhanced Gemini integration for multi-turn conversations"""
+
+import logging
+from typing import List, Dict, Optional, Any
+import google.generativeai as genai
+
+logger = logging.getLogger(__name__)
+
+class GeminiLLM:
+    """Enhanced Gemini LLM for multi-turn conversations"""
+    
+    def __init__(self):
+        self.api_key = None
+        self.model_name = "gemini-pro"
+        self.temperature = 0.7
+        self.max_tokens = 1024
+        self.configure()
+    
+    def configure(self):
+        """Configure Gemini API"""
+        import os
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            genai.configure(api_key=api_key)
+            self.api_key = api_key
+            logger.info("Gemini API configured")
+        else:
+            logger.warning("GEMINI_API_KEY not found in environment")
+    
+    def get_response(self, message: str, history: Optional[List[Dict]] = None, 
+                    system_prompt: Optional[str] = None) -> str:
+        """Get response from Gemini with conversation history"""
+        try:
+            model = genai.GenerativeModel(
+                model_name=self.model_name,
+                generation_config={
+                    "temperature": self.temperature,
+                    "max_output_tokens": self.max_tokens,
+                }
+            )
+            
+            # Build conversation messages
+            messages = []
+            
+            # Add system prompt as initial context
+            if system_prompt:
+                messages.append({
+                    "role": "user",
+                    "parts": [system_prompt]
+                })
+                messages.append({
+                    "role": "model",
+                    "parts": ["Understood. I'll follow these guidelines."]
+                })
+            
+            # Add conversation history
+            if history:
+                for msg in history:
+                    role = "user" if msg.get("role") == "user" else "model"
+                    messages.append({
+                        "role": role,
+                        "parts": [msg.get("content", "")]
+                    })
+            
+            # Add current message
+            messages.append({
+                "role": "user",
+                "parts": [message]
+            })
+            
+            # Get response
+            response = model.generate_content(messages)
+            
+            if response and response.text:
+                return response.text
+            else:
+                logger.warning("Empty response from Gemini")
+                return "I couldn't generate a response. Please try again."
+                
+        except Exception as e:
+            logger.error(f"Gemini API error: {str(e)}")
+            if "429" in str(e):
+                raise Exception("Rate limit error")
+            raise
+    
+    def generate_sales_pitch(self, customer_data: Dict) -> str:
+        """Generate personalized sales pitch"""
+        prompt = f"""
+        Generate a personalized loan offer pitch for this customer:
+        - Name: {customer_data.get('customer_name', 'Customer')}
+        - Requested Amount: {customer_data.get('requested_amount', 'Unknown')} rupees
+        - Pre-approved Limit: {customer_data.get('pre_approved_limit', 'Unknown')} rupees
+        - Credit Score: {customer_data.get('credit_score', 'Unknown')}
+        
+        Make it professional, friendly, and compelling. Keep it to 2-3 sentences.
+        """
+        
+        try:
+            model = genai.GenerativeModel(model_name=self.model_name)
+            response = model.generate_content(prompt)
+            return response.text if response else "Special loan offer available for you!"
+        except Exception as e:
+            logger.error(f"Sales pitch generation error: {str(e)}")
+            return "We have special loan offers available for you!"
+    
+    def extract_information(self, message: str) -> Dict[str, Any]:
+        """Extract customer information from message"""
+        prompt = f"""
+        Extract customer information from this message in JSON format:
+        Message: {message}
+        
+        Look for:
+        - customer_name (string)
+        - phone (string, 10 digits)
+        - requested_amount (number)
+        - credit_score (number 300-900)
+        - income (number)
+        
+        Return only JSON, no other text.
+        """
+        
+        try:
+            model = genai.GenerativeModel(model_name=self.model_name)
+            response = model.generate_content(prompt)
+            
+            import json
+            if response and response.text:
+                try:
+                    return json.loads(response.text)
+                except:
+                    return {}
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Information extraction error: {str(e)}")
+            return {}
+    
+    def is_available(self) -> bool:
+        """Check if API is available"""
+        return self.api_key is not None
+
+
+# Backward compatibility alias
+class GeminiClient(GeminiLLM):
+    """Backward compatible alias for GeminiLLM"""
+    pass
