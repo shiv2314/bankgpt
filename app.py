@@ -149,16 +149,20 @@ with st.sidebar:
     # Language & Voice Settings
     language = st.radio("🌐 Language", ["English", "हिंदी"], horizontal=False, key="sidebar_language")
     
-    # Voice settings - only show if available
+    # Voice settings - with demo mode option
     voice_available = is_voice_available()
-    if voice_available:
+    
+    # Demo mode toggle - allows testing voice features without hardware
+    demo_voice_mode = st.toggle("🎭 Demo Voice Mode", value=False, key="sidebar_demo_voice", 
+                                help="Enable voice features for testing (simulates microphone)")
+    
+    if voice_available or demo_voice_mode:
         voice_mode = st.toggle("🎙️ Voice Input/Output", value=False, key="sidebar_voice")
         if voice_mode:
             tts_enabled = st.toggle("🔊 Text-to-Speech", value=False, key="sidebar_tts")
         else:
             tts_enabled = False
     else:
-        # Voice not available - don't show toggles or warnings
         voice_mode = False
         tts_enabled = False
     
@@ -167,6 +171,7 @@ with st.sidebar:
     update_conversation_state({
         'voice_enabled': voice_mode,
         'tts_enabled': tts_enabled,
+        'demo_voice_mode': demo_voice_mode,
         'language': language,
         'voice_available': voice_available
     })
@@ -297,26 +302,38 @@ with col_chat:
     voice_enabled = state.get('voice_enabled', False)
     tts_enabled = state.get('tts_enabled', False)
     voice_available = state.get('voice_available', False)
+    demo_voice_mode = state.get('demo_voice_mode', False)
     messages = get_messages()
     
     # Voice input controls
-    if voice_enabled and voice_available:
+    if voice_enabled and (voice_available or demo_voice_mode):
         st.markdown("### 🎤 Voice Input Mode Active")
-        col_voice1, col_voice2 = st.columns([2, 1])
         
-        with col_voice1:
-            st.info("Click the microphone button and speak your message clearly")
-        
-        with col_voice2:
-            if st.button("🎙️ Record Audio", use_container_width=True, type="primary"):
-                with st.spinner("🎤 Listening..."):
-                    recognized_text = recognize_speech()
-                    if recognized_text:
-                        st.session_state['voice_input'] = recognized_text
-                        st.success(f"✅ Heard: {recognized_text}")
+        if demo_voice_mode:
+            # Demo mode: text input simulates voice
+            st.info("🎭 Demo Mode: Type your message (simulates voice input)")
+            voice_input_text = st.text_input("Simulated Voice Input:", key="demo_voice_input", 
+                                            placeholder="Type what you would say...")
+            if voice_input_text:
+                st.session_state['voice_input'] = voice_input_text
+                st.success(f"✅ Simulated Input: {voice_input_text}")
+        else:
+            # Real microphone mode
+            col_voice1, col_voice2 = st.columns([2, 1])
+            
+            with col_voice1:
+                st.info("Click the microphone button and speak your message clearly")
+            
+            with col_voice2:
+                if st.button("🎙️ Record Audio", use_container_width=True, type="primary"):
+                    with st.spinner("🎤 Listening..."):
+                        recognized_text = recognize_speech()
+                        if recognized_text:
+                            st.session_state['voice_input'] = recognized_text
+                            st.success(f"✅ Heard: {recognized_text}")
     
     # Regular text input or voice input
-    if voice_enabled and voice_available and 'voice_input' in st.session_state:
+    if voice_enabled and (voice_available or demo_voice_mode) and 'voice_input' in st.session_state:
         user_input = st.session_state.voice_input
         st.session_state.voice_input = None  # Clear for next input
         st.info(f"📝 Processing: {user_input}")
