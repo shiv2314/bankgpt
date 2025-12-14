@@ -32,34 +32,18 @@ def load_mock_db():
 
 def run_unified_agent(user_input: str, state: Dict[str, Any], conversation_history: list) -> Dict[str, Any]:
     """
-    Unified conversation agent - handles entire loan application flow in one natural conversation.
+    Unified conversation agent - handles entire loan application flow naturally.
     
-    Conversation Stages:
-    1. greeting: First message - bot greets
-    2. loan_type: Bot asking about loan type
-    3. phone_asked: Bot asked for phone number
-    4. phone_provided: User provided phone, verified
-    5. amount_asked: Bot asked for amount
-    6. amount_provided: User provided amount
-    7. eligibility_check: Checking eligibility
-    8. approved: Loan approved
-    9. document_needed: Document verification required
-    10. document_uploaded: Document verified
-    11. completed: Loan sanctioned
-    
-    Flow:
-    1. First turn: Show greeting, set stage to phone_asked
-    2. Subsequent turns: Use LLM with conversation history and stage to:
-       - Understand loan needs and amount
-       - Extract phone number when in phone_asked stage
-       - Look up customer profile
-       - Determine eligibility
-       - Request documents if needed
-       - Generate approval
+    Key improvements:
+    - Flexible conversation flow that adapts to user input
+    - Handles unexpected/off-topic inputs gracefully
+    - Extracts information opportunistically (doesn't rigidly ask in sequence)
+    - Uses context to avoid asking for already-provided information
+    - Natural progression without forcing stages
     
     Args:
         user_input: User's message
-        state: Conversation state tracking (phone, amount, verification status, stage, etc.)
+        state: Conversation state tracking
         conversation_history: List of previous messages for context
         
     Returns:
@@ -68,84 +52,88 @@ def run_unified_agent(user_input: str, state: Dict[str, Any], conversation_histo
     
     detected_language = detect_language(user_input)
     
-    # Determine current conversation stage
-    current_stage = _determine_conversation_stage(state, conversation_history)
-    
     # FIRST TURN: Show greeting
     if not conversation_history:
-        greeting = _get_greeting(detected_language)
+        greeting = _get_adaptive_greeting(detected_language)
         return {
             'message': greeting,
             'detected_language': detected_language,
-            'conversation_stage': 'phone_asked'  # Next stage: ask for phone
+            'conversation_stage': 'loan_understanding'
         }
     
-    # SUBSEQUENT TURNS: Use LLM to drive conversation naturally
+    # SUBSEQUENT TURNS: Use LLM to drive conversation flexibly
     try:
         client = GroqClient()
         
-        # Build conversation context from history
+        # Extract ALL possible information from user input (not stage-dependent)
+        extracted_info = _extract_all_information(user_input, state, detected_language)
+        
+        # Build conversation context
         history_context = _build_history_context(conversation_history, detected_language)
         
-        # Build current state context with stage awareness
-        state_context = _build_state_context_with_stage(state, current_stage, detected_language)
+        # Build state context with what we know
+        state_context = _build_flexible_state_context(state, extracted_info, detected_language)
         
-        # System prompt that guides the conversation based on stage
-        system_prompt = _get_stage_aware_system_prompt(detected_language, state, current_stage)
+        # Determine what information we still need
+        missing_info = _determine_missing_info(state, extracted_info)
+        
+        # Build adaptive system prompt based on what we have and need
+        system_prompt = _get_adaptive_system_prompt(
+            detected_language, 
+            state, 
+            extracted_info, 
+            missing_info
+        )
         
         # Build the full prompt
         full_prompt = f"""{system_prompt}
 
-CONVERSATION STAGE: {current_stage.upper()}
-
 CONVERSATION HISTORY:
 {history_context}
 
-CURRENT STATE:
+WHAT WE KNOW:
 {state_context}
+
+WHAT WE STILL NEED:
+{missing_info if missing_info else '- All essential information has been collected'}
 
 Customer's latest message: "{user_input}"
 
-Based on the conversation stage, history, and current state, generate the next response.
-
-STAGE-SPECIFIC INSTRUCTIONS for stage '{current_stage}':
-{_get_stage_instructions(current_stage)}
-
 Your response should:
-1. Be natural and conversational
-2. Acknowledge the customer's input
-3. Move to the next stage appropriately
-4. Keep responses under 150 words
-5. Be warm and professional
+1. Acknowledge the customer's input naturally
+2. If they mentioned their loan need, ask clarifying questions
+3. Extract information naturally without rigid questioning
+4. If they go off-topic, politely redirect to loan assistance
+5. Keep responses under 150 words
+6. Be warm, professional, and conversational
 
-Generate only the bot's response, no explanations or meta-commentary."""
+Generate only the bot's response, no explanations."""
         
         # Generate response with Groq LLM
         response = GroqClient.generate_text(full_prompt, max_tokens=300)
         
         if not response or len(response.strip()) < 5:
-            response = "I'm having trouble processing that. Could you please rephrase?"
+            response = _get_fallback_response(missing_info, detected_language)
         
-        # Extract structured information from user input and state
-        extracted_info = _extract_information(user_input, state, conversation_history, detected_language)
-        
-        # Determine next stage
-        next_stage = _determine_next_stage(current_stage, extracted_info, state)
+        # Determine conversation stage adaptively
+        next_stage = _determine_adaptive_stage(state, extracted_info, missing_info)
         
         return {
             'message': response.strip(),
             'detected_language': detected_language,
             'conversation_stage': next_stage,
-            **extracted_info  # Include phone, amount, eligibility_path, etc.
+            **extracted_info  # Include phone, amount, name, etc. if extracted
         }
     
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         # Fallback response
         return {
             'message': "I'm having trouble processing your request. Could you please try again?",
             'detected_language': detected_language,
             'error': str(e),
-            'conversation_stage': current_stage
+            'conversation_stage': state.get('conversation_stage', 'loan_understanding')
         }
 
 
@@ -169,39 +157,42 @@ def _get_greeting(language: str) -> str:
 
 
 def _determine_conversation_stage(state: Dict[str, Any], conversation_history: list) -> str:
-    """Determine current conversation stage based on state and history."""
+    """Determine current conversation stage adaptively."""
     
-    # If no history, we're at greeting stage
     if not conversation_history:
         return 'greeting'
     
-    # Check what information we have
     has_phone = bool(state.get('phone'))
     has_amount = bool(state.get('requested_amount'))
-    phone_verified = state.get('verified', False)
+    has_name = bool(state.get('customer_name'))
     
-    # Determine stage based on what we have
-    if has_phone and phone_verified and has_amount:
-        # We have both phone and amount - check eligibility
-        amount = state.get('requested_amount', 0)
-        limit = state.get('pre_approved_limit', 0)
-        
-        if amount <= limit:
-            return 'approved'
-        else:
-            return 'document_needed'
-    
-    elif has_phone and phone_verified:
-        # We have phone but no amount - ask for amount
-        return 'amount_asked'
-    
-    elif has_phone and not phone_verified:
-        # Phone provided but not yet verified
-        return 'phone_provided'
-    
+    # Flexible stage determination
+    if has_amount and has_phone:
+        return 'eligibility_check'
+    elif has_phone:
+        return 'amount_gathering'
+    elif has_name or len(conversation_history) > 2:
+        return 'phone_gathering'
     else:
-        # No phone yet - ask for it
-        return 'phone_asked'
+        return 'loan_understanding'
+
+
+def _determine_adaptive_stage(state: Dict[str, Any], extracted_info: Dict[str, Any], missing_info: str) -> str:
+    """Determine stage adaptively based on what information we have."""
+    
+    has_phone = bool(state.get('phone') or extracted_info.get('phone'))
+    has_amount = bool(state.get('requested_amount') or extracted_info.get('requested_amount'))
+    has_name = bool(state.get('customer_name') or extracted_info.get('customer_name'))
+    
+    # Stage progression based on actual data, not rigid sequence
+    if has_amount and has_phone:
+        return 'eligibility_check'
+    elif has_phone and not has_amount:
+        return 'amount_gathering'
+    elif has_name and not has_phone:
+        return 'phone_gathering'
+    else:
+        return 'loan_understanding'
 
 
 def _determine_next_stage(current_stage: str, extracted_info: Dict[str, Any], state: Dict[str, Any]) -> str:
@@ -394,6 +385,184 @@ Say amounts like "5 lakhs" or "five lakhs"."""
 LANGUAGE: English
 Use clear, professional English.
 Say amounts like "5 lakhs" or "500,000 rupees"."""
+
+
+def _extract_information(user_input: str, state: Dict[str, Any], 
+                         conversation_history: list, language: str) -> Dict[str, Any]:
+    """
+    Extract structured information from user input (backward compatibility).
+    """
+    return _extract_all_information(user_input, state, language)
+
+
+def _extract_all_information(user_input: str, state: Dict[str, Any], language: str) -> Dict[str, Any]:
+    """
+    Extract ALL possible information from user input, not stage-dependent.
+    Opportunistically extracts: name, phone, amount, income, etc.
+    """
+    import re
+    extracted = {}
+    user_lower = user_input.lower()
+    
+    # Extract name: "My name is John" or "I'm John" or "Call me John"
+    if not state.get('customer_name'):
+        name_patterns = [
+            r"(?:my )?name is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
+            r"i'?m\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
+            r"call me\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
+            r"you can call me\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)"
+        ]
+        for pattern in name_patterns:
+            match = re.search(pattern, user_input)
+            if match:
+                extracted['customer_name'] = match.group(1)
+                break
+    
+    # Extract phone number (10 digits)
+    if not state.get('phone'):
+        phone_matches = re.findall(r'\b\d{10}\b', user_input)
+        if phone_matches:
+            phone = phone_matches[0]
+            try:
+                db = load_mock_db()
+                ver_status, record = verification_agent(phone, db)
+                if record:
+                    extracted['phone'] = phone
+                    extracted['customer_name'] = record.get('name', extracted.get('customer_name', ''))
+                    extracted['credit_score'] = record.get('credit_score', 700)
+                    extracted['pre_approved_limit'] = record.get('approved_amount', 500000)
+                    extracted['income'] = record.get('income', 50000)
+                    extracted['verified'] = True
+            except:
+                extracted['phone'] = phone
+    
+    # Extract loan amount flexibly
+    if not state.get('requested_amount'):
+        # Pattern 1: "X lakhs" or "X lakh" or "X lac"
+        lakh_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:lakh|lac)', user_lower)
+        if lakh_match:
+            amount_value = float(lakh_match.group(1))
+            extracted['requested_amount'] = int(amount_value * 100000)
+        
+        # Pattern 2: "X crore"
+        elif re.search(r'(\d+(?:\.\d+)?)\s*crore', user_lower):
+            crore_match = re.search(r'(\d+(?:\.\d+)?)\s*crore', user_lower)
+            amount_value = float(crore_match.group(1))
+            extracted['requested_amount'] = int(amount_value * 10000000)
+        
+        # Pattern 3: "X rupees" or "Rs X"
+        elif re.search(r'(?:rupees?|rs\.?)\s*(\d+(?:,\d{3})*)', user_lower, re.IGNORECASE):
+            rupee_match = re.search(r'(?:rupees?|rs\.?)\s*(\d+(?:,\d{3})*)', user_lower, re.IGNORECASE)
+            amount_str = rupee_match.group(1).replace(',', '')
+            amount = int(amount_str)
+            if 100000 <= amount <= 100000000:  # Reasonable loan amount
+                extracted['requested_amount'] = amount
+        
+        # Pattern 4: Large 6-7 digit numbers
+        else:
+            large_numbers = re.findall(r'\b(\d{6,7})\b', user_input)
+            for num_str in large_numbers:
+                num = int(num_str)
+                if 100000 <= num <= 100000000:  # Between 1 lakh and 1 crore
+                    extracted['requested_amount'] = num
+                    break
+    
+    # Extract income if mentioned
+    if not state.get('income'):
+        income_patterns = [
+            r'(?:monthly |monthly income|income is|earn)\s*(?:rupees?|rs\.?)\s*(\d+(?:,\d{3})*)',
+            r'(?:per month|monthly)\s*(?:rupees?|rs\.?)\s*(\d+(?:,\d{3})*)',
+        ]
+        for pattern in income_patterns:
+            match = re.search(pattern, user_lower)
+            if match:
+                income_str = match.group(1).replace(',', '')
+                extracted['income'] = int(income_str)
+                break
+    
+    return extracted
+
+
+def _build_flexible_state_context(state: Dict[str, Any], extracted_info: Dict[str, Any], language: str) -> str:
+    """Build state context combining existing state and newly extracted info."""
+    info_lines = []
+    
+    # Combine existing state with extracted info
+    all_info = {**state, **extracted_info}
+    
+    if all_info.get('customer_name'):
+        info_lines.append(f"- Customer Name: {all_info['customer_name']}")
+    
+    if all_info.get('phone'):
+        info_lines.append(f"- Phone: {all_info['phone']} {'(Verified)' if all_info.get('verified') else '(Not verified)'}")
+    
+    if all_info.get('requested_amount'):
+        info_lines.append(f"- Requested Loan: ₹{all_info['requested_amount']:,}")
+    
+    if all_info.get('pre_approved_limit'):
+        info_lines.append(f"- Pre-approved Limit: ₹{all_info['pre_approved_limit']:,}")
+    
+    if all_info.get('credit_score'):
+        info_lines.append(f"- Credit Score: {all_info['credit_score']}")
+    
+    if all_info.get('income'):
+        info_lines.append(f"- Monthly Income: ₹{all_info['income']:,}")
+    
+    return "\n".join(info_lines) if info_lines else "- No information collected yet"
+
+
+def _determine_missing_info(state: Dict[str, Any], extracted_info: Dict[str, Any]) -> str:
+    """Determine what essential information is still missing."""
+    combined = {**state, **extracted_info}
+    missing = []
+    
+    if not combined.get('customer_name'):
+        missing.append("- Customer's name")
+    
+    if not combined.get('phone'):
+        missing.append("- Phone number for verification")
+    
+    if not combined.get('requested_amount'):
+        missing.append("- Loan amount needed")
+    
+    return "\n".join(missing) if missing else "- All information collected"
+
+
+def _get_adaptive_greeting(language: str) -> str:
+    """Get friendly, natural greeting."""
+    greetings = {
+        'hindi': "नमस्ते! 👋 मैं आपका BankGPT लोन असिस्टेंट हूँ। आपको कितना लोन चाहिए? मैं आपको 10 मिनट में अनुमोदन दे सकता हूँ।",
+        'english': "Hello! 👋 I'm BankGPT, your loan assistant. How much would you like to borrow? I can get you approved in just 10 minutes."
+    }
+    return greetings.get(language, greetings['english'])
+
+
+def _get_adaptive_system_prompt(language: str, state: Dict[str, Any], 
+                                extracted_info: Dict[str, Any], missing_info: str) -> str:
+    """Get adaptive system prompt based on conversation state."""
+    
+    return f"""You are BankGPT, a friendly and professional loan officer. 
+You help customers apply for personal loans quickly and easily.
+
+Key guidelines:
+1. Be conversational and natural - don't rigidly follow a script
+2. If customer mentions their loan need, explore it naturally
+3. Extract information opportunistically (don't ask rigidly for phone then amount then income)
+4. If customer provides unexpected information (like income when asked about amount), acknowledge it and use it
+5. If they go off-topic, politely redirect: "That sounds great! Let's get your loan application started."
+6. Be warm, encouraging, and professional
+7. If they ask questions, answer helpfully
+8. Don't ask for information they already provided
+
+Language: {'Hindi/Hinglish mix' if language == 'hindi' else 'English'}"""
+
+
+def _get_fallback_response(missing_info: str, language: str) -> str:
+    """Get fallback response when LLM fails."""
+    if language == 'hindi':
+        return "कृपया अपना प्रश्न फिर से दोहराएं या बताएं कि आप कितना लोन चाहते हैं।"
+    else:
+        return "Could you tell me more about what you need? How much loan are you looking for?"
 
 
 def _extract_information(user_input: str, state: Dict[str, Any], 

@@ -153,9 +153,15 @@ with st.sidebar:
     voice_available = is_voice_available()
     if voice_available:
         voice_mode = st.toggle("🎙️ Voice Input/Output", value=False, key="sidebar_voice")
-        tts_enabled = st.toggle("🔊 Text-to-Speech", value=False, key="sidebar_tts")
+        if voice_mode:
+            tts_enabled = st.toggle("🔊 Text-to-Speech", value=False, key="sidebar_tts")
+        else:
+            tts_enabled = False
     else:
-        st.warning("🎤 Voice input unavailable - microphone not detected", icon="⚠️")
+        # Only show warning if voice is truly unavailable (e.g., no audio device)
+        # In most cases this is normal for web environments
+        with st.expander("ℹ️ Voice Features", expanded=False):
+            st.info("Voice input is not available in this environment (no microphone detected). You can still use text chat!", icon="ℹ️")
         voice_mode = False
         tts_enabled = False
     

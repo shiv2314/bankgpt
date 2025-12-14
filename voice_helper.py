@@ -86,11 +86,33 @@ def recognize_speech() -> Optional[str]:
 
 
 def is_voice_available() -> bool:
-    """Check if voice input/output is available."""
+    """
+    Check if voice input/output is available.
+    More resilient - returns True by default unless explicitly unavailable.
+    """
     try:
-        # Check if we can access microphone
-        with sr.Microphone() as source:
+        # First try pyaudio if available
+        try:
+            import pyaudio
+            p = pyaudio.PyAudio()
+            device_count = p.get_device_count()
+            p.terminate()
+            return device_count > 0
+        except ImportError:
+            # pyaudio not installed, that's okay
             pass
-        return True
-    except:
+        
+        # Try speech recognition microphone
+        try:
+            # Just test if we can create a Microphone object
+            # This might fail in headless environments, but that's expected
+            sr.Microphone()
+            return True
+        except:
+            # Microphone not available - common in server/headless environments
+            # Return False but don't crash
+            return False
+            
+    except Exception as e:
+        # Default to False on any error
         return False
