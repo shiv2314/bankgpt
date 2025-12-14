@@ -149,7 +149,7 @@ with st.sidebar:
     # Language & Voice Settings
     language = st.radio("🌐 Language", ["English", "हिंदी"], horizontal=False, key="sidebar_language")
     
-    # Voice settings with availability check
+    # Voice settings - only show if available
     voice_available = is_voice_available()
     if voice_available:
         voice_mode = st.toggle("🎙️ Voice Input/Output", value=False, key="sidebar_voice")
@@ -158,10 +158,7 @@ with st.sidebar:
         else:
             tts_enabled = False
     else:
-        # Only show warning if voice is truly unavailable (e.g., no audio device)
-        # In most cases this is normal for web environments
-        with st.expander("ℹ️ Voice Features", expanded=False):
-            st.info("Voice input is not available in this environment (no microphone detected). You can still use text chat!", icon="ℹ️")
+        # Voice not available - don't show toggles or warnings
         voice_mode = False
         tts_enabled = False
     
