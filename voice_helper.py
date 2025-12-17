@@ -4,8 +4,6 @@ Handles voice input (speech-to-text) and voice output (text-to-speech).
 Uses Streamlit's st.audio_input for recording and Google Speech Recognition for transcription.
 """
 
-import speech_recognition as sr
-import pyttsx3
 import threading
 import tempfile
 import os
@@ -13,10 +11,19 @@ import io
 from typing import Optional, Tuple
 import streamlit as st
 
-# Initialize TTS engine
-tts_engine = pyttsx3.init()
-tts_engine.setProperty('rate', 150)  # Speaking rate
-tts_engine.setProperty('volume', 0.9)  # Volume (0-1)
+# Gracefully handle optional audio libraries
+try:
+    import speech_recognition as sr
+except ImportError:
+    sr = None
+
+try:
+    import pyttsx3
+    tts_engine = pyttsx3.init()
+    tts_engine.setProperty('rate', 150)
+    tts_engine.setProperty('volume', 0.9)
+except (ImportError, Exception):
+    tts_engine = None
 
 
 def speak_text(text: str, language: str = 'english', async_mode: bool = True) -> None:
@@ -28,6 +35,10 @@ def speak_text(text: str, language: str = 'english', async_mode: bool = True) ->
         language: Language for speech output
         async_mode: If True, speak in background thread
     """
+    if not tts_engine:
+        print("⚠️ Text-to-speech not available in this environment")
+        return
+    
     try:
         # Set language-specific voice
         voices = tts_engine.getProperty('voices')
@@ -65,6 +76,10 @@ def transcribe_audio_with_google(audio_bytes: bytes) -> Optional[str]:
     Returns:
         Transcribed text or None if failed
     """
+    if not sr:
+        print("⚠️ Speech recognition not available")
+        return None
+    
     recognizer = sr.Recognizer()
     temp_file_path = None
     
@@ -167,6 +182,9 @@ def transcribe_audio_simple(audio_bytes: bytes) -> Optional[str]:
     Returns:
         Transcribed text or None if failed
     """
+    if not sr:
+        return None
+    
     recognizer = sr.Recognizer()
     
     try:
