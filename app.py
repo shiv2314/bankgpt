@@ -268,13 +268,6 @@ with st.sidebar:
         The exact rate may vary based on your credit profile and income.
         """)
     
-    with st.expander("⏱️ How long does approval take?"):
-        st.write("""
-        For pre-approved customers, approval is **INSTANT** (less than 1 minute)!
-        
-        For new customers, it typically takes 2-4 hours.
-        Once approved, funds are disbursed within 2-4 business hours.
-        """)
     
     with st.expander("📄 What documents do I need?"):
         st.write("""
