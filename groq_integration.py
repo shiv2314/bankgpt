@@ -6,17 +6,20 @@ Using Groq's Mixtral-8x7b model for loan conversation.
 
 import os
 from typing import Optional
-from groq import Groq
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 # Initialize Groq client
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-if GROQ_API_KEY:
-    CLIENT = Groq(api_key=GROQ_API_KEY)
-else:
+try:
+    from groq import Groq
+    GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+    if GROQ_API_KEY:
+        CLIENT = Groq(api_key=GROQ_API_KEY)
+    else:
+        CLIENT = None
+except ImportError:
     CLIENT = None
 
 
