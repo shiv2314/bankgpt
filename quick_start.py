@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-quick_start.py - Quick start commands for BankGPT
-Run this to see available options
-"""
 
 import sys
 import io
@@ -181,16 +177,6 @@ def print_menu():
     Deployment:    READY
     Documentation: COMPREHENSIVE
     
-    ═══════════════════════════════════════════════════════════════
-
-    NEED HELP?
-    ─────────────────────────────────────────────────────────────
-    See BANKGPT_GUIDE.md for detailed documentation
-    See README_ARCHITECTURE.md for technical details
-    See PROJECT_STATUS.md for status and roadmap
-    See ENHANCEMENT_ROADMAP.md for future features
-
-    ═══════════════════════════════════════════════════════════════
     """
     print(menu)
 

@@ -1,4 +1,3 @@
-# session_manager.py - Manages Streamlit session state for conversation flow
 
 import streamlit as st
 from typing import Dict, Any, List, Optional

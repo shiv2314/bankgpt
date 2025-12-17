@@ -186,7 +186,7 @@ with st.sidebar:
     st.subheader(" Document Upload")
     
     # Document upload section
-    st.markdown("**Upload Salary Slip (if required)**")
+    st.markdown("**Upload Files (if required)**")
     uploaded_file = st.file_uploader(
         "Choose a PDF or image file",
         type=['pdf', 'png', 'jpg', 'jpeg'],
@@ -419,7 +419,6 @@ with col_chat:
             audio_bytes = get_audio_input_widget(key="main_audio_input")
             
             if audio_bytes:
-                st.info(f"📊 Audio recorded: {len(audio_bytes)} bytes")
                 with st.spinner("🔄 Transcribing audio..."):
                     recognized_text = recognize_speech_from_streamlit_audio(audio_bytes)
                     if recognized_text:

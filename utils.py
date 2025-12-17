@@ -28,7 +28,6 @@ def compute_foir(monthly_income: float, existing_emis_total: float, new_emi: flo
 
 
 def eligibility_band(foir_percent: float, credit_score: int = None):
-    # If credit score exists and is below threshold
     if credit_score is not None and credit_score < 650:
         return 'High Risk (credit score under threshold)'
     

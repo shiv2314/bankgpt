@@ -8,7 +8,6 @@ import os
 logger = logging.getLogger(__name__)
 
 class GeminiLLM:
-    """Enhanced Gemini LLM for multi-turn conversations"""
     
     def __init__(self):
         self.api_key = None

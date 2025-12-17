@@ -217,7 +217,6 @@ def main():
             backend.terminate()
         sys.exit(1)
     
-    # Monitor processes
     monitor_processes(backend, frontend)
 
 if __name__ == "__main__":

@@ -141,18 +141,60 @@ Your response should:
 Generate only the bot's response, no explanations."""
         
         # Generate response using Gemini with Groq fallback
-        response = _generate_llm_response(full_prompt, max_tokens=300)
-        
-        if not response:
-            response = _get_fallback_response(missing_info, detected_language)
-        
-        # Determine conversation stage adaptively
-        next_stage = _determine_adaptive_stage(state, extracted_info, missing_info)
-
-        # Enforce deterministic eligibility flow per product logic
+        # BUT: Skip LLM response if we have both phone and amount (eligibility check will provide response)
         phone = state.get('phone') or extracted_info.get('phone')
         amount = state.get('requested_amount') or extracted_info.get('requested_amount')
         eligibility_path = state.get('eligibility_path')
+        
+        # Check if user is selecting tenure after approval
+        selected_tenure = extracted_info.get('selected_tenure')
+        if state.get('conversation_stage') == 'approved' and selected_tenure:
+            # User has selected tenure, calculate final EMI and finalize
+            loan_amount = state.get('requested_amount', 0)
+            if loan_amount > 0:
+                monthly_rate = 8.5 / 100 / 12  # 8.5% annual
+                num_months = selected_tenure
+                emi = (loan_amount * monthly_rate * (1 + monthly_rate) ** num_months) / ((1 + monthly_rate) ** num_months - 1)
+                
+                response = f"""✅ Perfect! Your loan is finalized with the following details:
+
+💰 **Loan Amount:** ₹{loan_amount:,}
+📅 **Tenure:** {num_months} months ({num_months//12} years)
+💳 **Monthly EMI:** ₹{emi:,.0f}
+📊 **Interest Rate:** 8.5% per annum
+💵 **Total Amount Payable:** ₹{(emi * num_months):,.0f}
+
+🎉 Your sanction letter is ready for download in the sidebar.
+
+Thank you for choosing BankGPT! Your funds will be disbursed within 2-4 business hours."""
+                
+                next_stage = 'completed'
+                eligibility_path = state.get('eligibility_path', 'FAST_TRACK')
+                
+                # Store tenure in result
+                extracted_info['selected_tenure'] = selected_tenure
+                extracted_info['final_emi'] = emi
+                
+                return {
+                    'message': response.strip(),
+                    'detected_language': detected_language,
+                    'conversation_stage': next_stage,
+                    'eligibility_path': eligibility_path,
+                    'selected_tenure': selected_tenure,
+                    'final_emi': emi,
+                    **extracted_info
+                }
+        
+        # Only generate LLM response if we're gathering information (don't have both phone + amount yet)
+        if phone and amount:
+            response = ""  # Will be set by eligibility logic below
+        else:
+            response = _generate_llm_response(full_prompt, max_tokens=300)
+            if not response:
+                response = _get_fallback_response(missing_info, detected_language)
+        
+        # Determine conversation stage adaptively
+        next_stage = _determine_adaptive_stage(state, extracted_info, missing_info)
 
         # If user shared a phone that is NOT in CRM, instruct to register at Tata Capital
         if phone and (state.get('not_in_crm') or extracted_info.get('not_in_crm')):
@@ -181,21 +223,15 @@ Generate only the bot's response, no explanations."""
                     eligibility_path = 'MANUAL_REVIEW'
                     next_stage = 'completed'
                     response = (
-                        "🔍 Your application requires manual review due to a risk flag. "
+                        " Your application requires manual review due to a risk flag. "
                         "Our specialist team will contact you within 24 hours."
                     )
                 else:
                     eligibility_path = 'FAST_TRACK'
                     next_stage = 'approved'
-                    # Ask for tenure preference; do not show letters in chat
                     tenure_options = (
                         "\n\n🎉 Congratulations! You're instantly approved.\n\n"
-                        "Choose an EMI tenure to proceed:\n"
-                        "- 24 months (2 years)\n"
-                        "- 36 months (3 years)\n"
-                        "- 48 months (4 years)\n"
-                        "- 60 months (5 years) - Recommended\n"
-                        "- 72 months (6 years)\n\n"
+                        "Please let us know your desired EMI tenure\n"
                         "You can download your sanction letter from the sidebar once finalized."
                     )
                     response = tenure_options
@@ -238,10 +274,8 @@ Generate only the bot's response, no explanations."""
                         "Requested amount exceeds permitted limits and profile doesn't meet criteria."
                     )
         
-        # If loan is approved, don't add letter/EMI to chat - keep it conversational
-        if next_stage == 'approved' or (extracted_info.get('requested_amount') and state.get('pre_approved_limit') and extracted_info.get('requested_amount') <= state.get('pre_approved_limit')):
-            next_stage = 'approved'
-            
+        # If loan is approved, calculate EMI and store context for sidebar
+        if next_stage == 'approved':
             # Calculate EMI (assuming basic calculation: 8.5% annual interest, 5-year tenure)
             loan_amount = state.get('requested_amount', 0) or extracted_info.get('requested_amount', 0)
             if loan_amount > 0:
@@ -266,20 +300,6 @@ Generate only the bot's response, no explanations."""
                 
                 # Store approval context in state for sidebar to use
                 state['approval_context'] = approval_context
-                
-                # Keep chat conversational - ask about EMI preferences instead of showing full letter
-                tenure_options = """
-
-**EMI Options (Select your preferred tenure):**
-- 24 months (2 years)
-- 36 months (3 years)
-- 48 months (4 years)
-- 60 months (5 years) - *Recommended*
-- 72 months (6 years)
-
-Which tenure would work best for you? Once you select, I'll show you the exact EMI and you can download your approval letter from the sidebar.
-"""
-                response = f"{response}\n{tenure_options}"
         
 
         return {
@@ -458,8 +478,14 @@ def _build_history_context(conversation_history: list, language: str) -> str:
     
     lines = []
     for msg in conversation_history[-6:]:  # Last 6 messages for context
-        role = "Customer" if msg['role'] == 'user' else "BankGPT"
-        lines.append(f"{role}: {msg['content'][:100]}")
+        # Handle both dict and tuple formats
+        if isinstance(msg, dict):
+            role = "Customer" if msg['role'] == 'user' else "BankGPT"
+            content = msg['content'][:100]
+        else:  # tuple format: (role, content, timestamp)
+            role = "Customer" if msg[0] == 'user' else "BankGPT"
+            content = msg[1][:100]
+        lines.append(f"{role}: {content}")
     
     return "\n".join(lines)
 
@@ -638,6 +664,26 @@ def _extract_all_information(user_input: str, state: Dict[str, Any], language: s
             if match:
                 income_str = match.group(1).replace(',', '')
                 extracted['income'] = int(income_str)
+                break
+    
+    # Extract tenure selection (24, 36, 48, 60, 72 months)
+    if not state.get('selected_tenure'):
+        # Look for tenure mentions like "36 months", "3 years", or just "36"
+        tenure_patterns = [
+            (r'\b24\s*(?:months?|mnth)?', 24),
+            (r'\b36\s*(?:months?|mnth)?', 36),
+            (r'\b48\s*(?:months?|mnth)?', 48),
+            (r'\b60\s*(?:months?|mnth)?', 60),
+            (r'\b72\s*(?:months?|mnth)?', 72),
+            (r'\b2\s*years?', 24),
+            (r'\b3\s*years?', 36),
+            (r'\b4\s*years?', 48),
+            (r'\b5\s*years?', 60),
+            (r'\b6\s*years?', 72),
+        ]
+        for pattern, months in tenure_patterns:
+            if re.search(pattern, user_lower):
+                extracted['selected_tenure'] = months
                 break
     
     return extracted

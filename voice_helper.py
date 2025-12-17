@@ -137,18 +137,23 @@ def get_audio_input_widget(key: str = "audio_input") -> Optional[bytes]:
         Audio bytes or None if no audio recorded
     """
     try:
-        audio_bytes = st.audio_input(
+        audio_file = st.audio_input(
             "🎤 Record your message",
             key=key,
             help="Click the microphone button to start recording. Speak clearly for 3-10 seconds."
         )
         
-        if audio_bytes:
+        if audio_file:
+            # Read bytes from UploadedFile object
+            audio_bytes = audio_file.read()
             st.write(f"📊 Audio data received: {len(audio_bytes)} bytes")
+            return audio_bytes
             
-        return audio_bytes
+        return None
     except Exception as e:
         st.error(f"❌ Audio recording error: {e}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 

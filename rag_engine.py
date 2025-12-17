@@ -102,13 +102,10 @@ def chat_with_gemini(system_prompt: str, user_prompt: str, context_chunks: List[
         sources.append(src)
     context_combined = '\n\n'.join(context_texts)
 
-    # Ensure Gemini responds in requested language and cites sources
     system_full = system_prompt + f"\n\nPlease respond in the language: {language}. Cite source filenames in square brackets at the end of statements where relevant."
 
-    # Build full prompt combining system, context, and user query
     full_prompt = f"{system_full}\n\nContext (retrieved documents):\n{context_combined}\n\nUser question: {user_prompt}"
 
-    # Use GenerativeModel API - using flash-latest for better quota limits
     model = genai.GenerativeModel('gemini-flash-latest')
     response = model.generate_content(
         full_prompt,
@@ -118,6 +115,5 @@ def chat_with_gemini(system_prompt: str, user_prompt: str, context_chunks: List[
         )
     )
 
-    # Extract text
     out = response.text if hasattr(response, 'text') else str(response)
     return out, list(dict.fromkeys(sources))
