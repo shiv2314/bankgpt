@@ -33,5 +33,82 @@
     "income": 35000,
     "blacklisted": true,
     "approved_amount": 0
+  },
+  "9555444333": {
+    "name": "Rajesh Patel",
+    "credit_score": 750,
+    "income": 75000,
+    "blacklisted": false,
+    "approved_amount": 1500000
+  },
+  "9444333222": {
+    "name": "Divya Gupta",
+    "credit_score": 700,
+    "income": 50000,
+    "blacklisted": false,
+    "approved_amount": 600000
+  },
+  "9333222111": {
+    "name": "Vikram Singh",
+    "credit_score": 720,
+    "income": 85000,
+    "blacklisted": false,
+    "approved_amount": 2000000
+  },
+  "8222111000": {
+    "name": "Ananya Das",
+    "credit_score": 680,
+    "income": 45000,
+    "blacklisted": false,
+    "approved_amount": 500000
+  },
+  "8111000999": {
+    "name": "Suresh Iyer",
+    "credit_score": 655,
+    "income": 38000,
+    "blacklisted": false,
+    "approved_amount": 400000
+  },
+  "8000999888": {
+    "name": "Pooja Kapoor",
+    "credit_score": 765,
+    "income": 95000,
+    "blacklisted": false,
+    "approved_amount": 2500000
+  },
+  "7999888777": {
+    "name": "Arjun Reddy",
+    "credit_score": 670,
+    "income": 55000,
+    "blacklisted": false,
+    "approved_amount": 700000
+  },
+  "7888777666": {
+    "name": "Shreya Joshi",
+    "credit_score": 620,
+    "income": 42000,
+    "blacklisted": false,
+    "approved_amount": 300000
+  },
+  "7777666555": {
+    "name": "Kartik Malhotra",
+    "credit_score": 740,
+    "income": 70000,
+    "blacklisted": false,
+    "approved_amount": 1000000
+  },
+  "7666555444": {
+    "name": "Nisha Verma",
+    "credit_score": 805,
+    "income": 120000,
+    "blacklisted": false,
+    "approved_amount": 3000000
+  },
+  "7555444333": {
+    "name": "Harish Kumar",
+    "credit_score": 685,
+    "income": 52000,
+    "blacklisted": false,
+    "approved_amount": 900000
   }
 }

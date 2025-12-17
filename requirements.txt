@@ -1,17 +1,40 @@
-streamlit
-chromadb
-sentence-transformers
-transformers
-google-generativeai
-pypdf
-tqdm
-langdetect
-speechrecognition
-pydub
-numpy
-python-multipart
-python-dotenv
-streamlit-mic-recorder
-Pillow
-pytesseract
-fpdf
+# Core Framework
+streamlit>=1.28.0
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# LLM APIs
+google-generativeai>=0.8.5
+groq>=0.4.0
+
+# Vector Database & RAG
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+transformers>=4.30.0
+langchain>=0.1.0
+
+# Document Processing
+pypdf>=3.15.0
+pydub>=0.25.1
+pytesseract>=0.3.10
+Pillow>=10.0.0
+fpdf>=1.7.2
+
+# Voice & Audio
+pyttsx3>=2.90
+SpeechRecognition>=3.10.0
+pyaudio>=0.2.13
+
+# Utilities
+numpy>=1.24.0
+tqdm>=4.66.0
+langdetect>=1.0.9
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+httpx>=0.25.0
+
+# UI Components
+streamlit-mic-recorder>=0.0.7
+
+# Data Processing
+pandas>=2.0.0

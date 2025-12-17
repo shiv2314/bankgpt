@@ -11,7 +11,7 @@ from pathlib import Path
 
 from master_agent import run_unified_agent
 from session_manager import init_session, get_conversation_state, update_conversation_state, add_message, get_messages
-from voice_helper import speak_text, recognize_speech, is_voice_available
+from voice_helper import speak_text, is_voice_available, get_audio_input_widget, recognize_speech_from_streamlit_audio, check_microphone_permission
 from document_helper import generate_sanction_letter_pdf
 from utils import compute_emi
 
@@ -149,22 +149,28 @@ with st.sidebar:
     # Language & Voice Settings
     language = st.radio("🌐 Language", ["English", "हिंदी"], horizontal=False, key="sidebar_language")
     
-    # Voice settings - with demo mode option
+    # Voice settings - Streamlit handles microphone permissions automatically
     voice_available = is_voice_available()
     
-    # Demo mode toggle - allows testing voice features without hardware
-    demo_voice_mode = st.toggle("🎭 Demo Voice Mode", value=False, key="sidebar_demo_voice", 
-                                help="Enable voice features for testing (simulates microphone)")
-    
-    if voice_available or demo_voice_mode:
-        voice_mode = st.toggle("🎙️ Voice Input/Output", value=False, key="sidebar_voice")
+    if voice_available:
+        voice_mode = st.toggle("🎙️ Voice Input/Output", value=False, key="sidebar_voice",
+                               help="Use voice input with automatic microphone permission handling")
         if voice_mode:
             tts_enabled = st.toggle("🔊 Text-to-Speech", value=False, key="sidebar_tts")
+            st.info("🎤 Microphone access will be requested when you use voice input")
         else:
             tts_enabled = False
     else:
         voice_mode = False
         tts_enabled = False
+        st.warning("⚠️ Voice features may not be available in this environment")
+    
+    # Demo mode for testing (optional fallback)
+    if not voice_mode:
+        demo_voice_mode = st.toggle("🎭 Demo Voice Mode", value=False, key="sidebar_demo_voice", 
+                                    help="Text input that simulates voice for testing")
+    else:
+        demo_voice_mode = False
     
     # Update session state with settings
     state = get_conversation_state()
@@ -177,14 +183,7 @@ with st.sidebar:
     })
     
     st.divider()
-    st.subheader("📊 System Status")
-    st.success("✅ Master Agent: Online", icon="✅")
-    st.success("✅ Groq LLM: Active", icon="✅")
-    st.success("✅ Voice Engine: " + ("Ready" if voice_available else "Unavailable"), icon="✅")
-    st.success("✅ Database: Online", icon="✅")
-    
-    st.divider()
-    st.subheader("📄 Document Upload")
+    st.subheader(" Document Upload")
     
     # Document upload section
     st.markdown("**Upload Salary Slip (if required)**")
@@ -204,6 +203,8 @@ with st.sidebar:
         }
         st.success(f"✅ File uploaded: {uploaded_file.name}")
         st.info("Document will be verified during loan processing.")
+        # Reflect upload into conversation state so the agent can progress
+        update_conversation_state({'document_uploaded': True})
 
     st.divider()
     st.subheader("📑 Sanction Letter")
@@ -229,13 +230,101 @@ with st.sidebar:
         st.info("Sanction letter will be available after approval is confirmed.")
 
 
-    st.caption("*Powered by Groq LLM 🤖*")
     
     if st.button("🔄 Start New Application", use_container_width=True):
         st.session_state.clear()
         st.rerun()
         init_session()
         st.rerun()
+    
+    st.divider()
+    
+    # Contact Us Section
+    st.subheader("📞 Contact Us")
+    st.markdown("""
+    **Our team is ready to help:**
+    
+    📱 **Phone**  
+    1800-BANKGPT (1800-226-5478)
+    
+    💬 **WhatsApp**  
+    +91-XXXXXXXXXX
+    
+    📧 **Email**  
+    support@bankgpt.in
+    
+    ⏰ **Hours**  
+    Monday-Friday, 9 AM - 6 PM IST
+    """)
+    
+    st.divider()
+    
+    # FAQ Section
+    st.subheader("❓ Frequently Asked Questions")
+    
+    with st.expander("💰 What is the interest rate?"):
+        st.write("""
+        Our competitive interest rate is **8.5% per annum** for personal loans.
+        The exact rate may vary based on your credit profile and income.
+        """)
+    
+    with st.expander("⏱️ How long does approval take?"):
+        st.write("""
+        For pre-approved customers, approval is **INSTANT** (less than 1 minute)!
+        
+        For new customers, it typically takes 2-4 hours.
+        Once approved, funds are disbursed within 2-4 business hours.
+        """)
+    
+    with st.expander("📄 What documents do I need?"):
+        st.write("""
+        **Minimum documents required:**
+        - Valid ID proof (Aadhar/PAN/Passport)
+        - Address proof (Recent utility bill/bank statement)
+        - Income proof (Salary slip/IT returns)
+        
+        For pre-approved customers within their limit:
+        No documents needed at approval stage!
+        """)
+    
+    with st.expander("💳 Can I prepay my loan?"):
+        st.write("""
+        Yes! You can prepay your loan anytime **after 6 months** with:
+        - **Zero prepayment penalty** ✅
+        - No hidden charges
+        - Instant credit of prepaid amount to principal
+        """)
+    
+    with st.expander("🛡️ Is my personal information safe?"):
+        st.write("""
+        Absolutely! We use:
+        - **256-bit SSL encryption** for all data
+        - **RBI-compliant** security standards
+        - **Zero data sharing** without your consent
+        - Your information is PCI-DSS compliant
+        """)
+    
+    with st.expander("🏦 Who is BankGPT?"):
+        st.write("""
+        BankGPT is an AI-powered loan processing platform by Tata Capital.
+        
+        We provide:
+        - **Instant loan approvals** for pre-approved customers
+        - **AI-driven personalization** for better rates
+        - **24/7 chatbot support** via voice & text
+        - **Transparent process** with clear terms & conditions
+        """)
+    
+    with st.expander("✅ What's the maximum loan amount?"):
+        st.write("""
+        **Maximum loan amount:** Up to ₹25 lakhs
+        
+        Your actual pre-approved limit depends on:
+        - Your income level
+        - Credit score
+        - Employment stability
+        - Existing obligations
+        """)
 
 # --- MAIN LAYOUT: CHAT (Left 2/3) vs XAI PANEL (Right 1/3) ---
 col_chat, col_xai = st.columns([2, 1.2], gap="large")
@@ -267,11 +356,13 @@ with col_xai:
     # Application Status
     st.markdown("**📋 Application Summary**")
     with st.container(border=True):
+        # Display name if available from CRM lookup
         if state.get('customer_name'):
             st.write(f"👤 **Name:** {state.get('customer_name')}")
         
+        # Phone number is the unique identifier
         if state.get('phone'):
-            st.write(f"📱 **Phone:** {state.get('phone')}")
+            st.write(f"📱 **ID (Phone):** {state.get('phone')}")
         
         if state.get('requested_amount'):
             st.write(f"💰 **Requested:** ₹{state.get('requested_amount'):,}")
@@ -318,19 +409,39 @@ with col_chat:
                 st.session_state['voice_input'] = voice_input_text
                 st.success(f"✅ Simulated Input: {voice_input_text}")
         else:
-            # Real microphone mode
-            col_voice1, col_voice2 = st.columns([2, 1])
+            # Real microphone mode using Streamlit's audio input
+            st.markdown("#### 🎙️ Voice Recording")
             
-            with col_voice1:
-                st.info("Click the microphone button and speak your message clearly")
+            # Show microphone permission info
+            check_microphone_permission()
             
-            with col_voice2:
-                if st.button("🎙️ Record Audio", use_container_width=True, type="primary"):
-                    with st.spinner("🎤 Listening..."):
-                        recognized_text = recognize_speech()
-                        if recognized_text:
-                            st.session_state['voice_input'] = recognized_text
-                            st.success(f"✅ Heard: {recognized_text}")
+            # Audio input widget
+            audio_bytes = get_audio_input_widget(key="main_audio_input")
+            
+            if audio_bytes:
+                st.info(f"📊 Audio recorded: {len(audio_bytes)} bytes")
+                with st.spinner("🔄 Transcribing audio..."):
+                    recognized_text = recognize_speech_from_streamlit_audio(audio_bytes)
+                    if recognized_text:
+                        st.session_state['voice_input'] = recognized_text
+                        st.success(f"✅ Transcribed: {recognized_text}")
+                        st.rerun()  # Refresh to process the input
+                    else:
+                        st.error("❌ Could not transcribe audio. This could be due to:")
+                        st.markdown("""
+                        - **Audio quality**: Make sure you're in a quiet environment
+                        - **Speaking clarity**: Speak clearly and at normal pace
+                        - **Internet connection**: Google Speech Recognition requires internet
+                        - **Audio format**: The recording might not be in a supported format
+                        - **Audio length**: Try recording for 3-10 seconds
+                        """)
+                        st.info("💡 **Tips for better recognition:**")
+                        st.markdown("""
+                        - Speak directly into the microphone
+                        - Use simple, clear sentences
+                        - Avoid background noise
+                        - Ensure stable internet connection
+                        """)
     
     # Regular text input or voice input
     if voice_enabled and (voice_available or demo_voice_mode) and 'voice_input' in st.session_state:

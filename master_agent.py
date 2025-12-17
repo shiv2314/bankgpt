@@ -1,13 +1,6 @@
 # master_agent.py - Unified LLM-Driven Conversation Agent
 """
 Single, continuous conversation flow powered by LLM.
-No phases - one natural conversation that handles:
-- Greeting and loan understanding
-- Phone verification and profile lookup
-- Loan amount and eligibility
-- Document verification if needed
-- Approval and sanction
-
 Language-aware responses (English, Hindi, Hinglish)
 Smart context tracking to avoid duplicate questions
 """
@@ -18,8 +11,48 @@ from typing import Dict, Any, Optional
 from agents import load_db, verification_agent, fraud_agent, underwriting_agent, sanction_agent
 from language_helper import detect_language
 from groq_integration import GroqClient
+from gemini_integration_v2 import GeminiLLM
+from xai_helper import generate_approval_letter, generate_emi_breakdown
 
 DATA_PATH = Path('data/mock_db.json')
+
+
+def _generate_llm_response(prompt: str, max_tokens: int = 300) -> str:
+    """
+    Generate LLM response using Gemini as primary, Groq as fallback.
+    
+    Args:
+        prompt: The full prompt to send to the LLM
+        max_tokens: Maximum tokens for response
+        
+    Returns:
+        Generated response text
+    """
+    # Try Gemini first
+    try:
+        gemini_client = GeminiLLM()
+        response = gemini_client.get_response(prompt)
+        if response and len(response.strip()) >= 5:
+            print("✅ Generated response using Gemini")
+            return response.strip()
+        else:
+            print("⚠️ Gemini returned empty/short response, trying Groq fallback")
+    except Exception as e:
+        print(f"⚠️ Gemini failed: {e}, trying Groq fallback")
+    
+    # Fallback to Groq
+    try:
+        groq_client = GroqClient()
+        response = groq_client.generate_text(prompt, max_tokens=max_tokens)
+        if response and len(response.strip()) >= 5:
+            print("✅ Generated response using Groq (fallback)")
+            return response.strip()
+        else:
+            print("❌ Both Gemini and Groq failed")
+    except Exception as e:
+        print(f"❌ Groq fallback also failed: {e}")
+    
+    return ""
 
 
 def load_mock_db():
@@ -63,8 +96,6 @@ def run_unified_agent(user_input: str, state: Dict[str, Any], conversation_histo
     
     # SUBSEQUENT TURNS: Use LLM to drive conversation flexibly
     try:
-        client = GroqClient()
-        
         # Extract ALL possible information from user input (not stage-dependent)
         extracted_info = _extract_all_information(user_input, state, detected_language)
         
@@ -104,24 +135,158 @@ Your response should:
 2. If they mentioned their loan need, ask clarifying questions
 3. Extract information naturally without rigid questioning
 4. If they go off-topic, politely redirect to loan assistance
-5. Keep responses under 150 words
+5. Keep responses under 200 words
 6. Be warm, professional, and conversational
 
 Generate only the bot's response, no explanations."""
         
-        # Generate response with Groq LLM
-        response = GroqClient.generate_text(full_prompt, max_tokens=300)
+        # Generate response using Gemini with Groq fallback
+        response = _generate_llm_response(full_prompt, max_tokens=300)
         
-        if not response or len(response.strip()) < 5:
+        if not response:
             response = _get_fallback_response(missing_info, detected_language)
         
         # Determine conversation stage adaptively
         next_stage = _determine_adaptive_stage(state, extracted_info, missing_info)
+
+        # Enforce deterministic eligibility flow per product logic
+        phone = state.get('phone') or extracted_info.get('phone')
+        amount = state.get('requested_amount') or extracted_info.get('requested_amount')
+        eligibility_path = state.get('eligibility_path')
+
+        # If user shared a phone that is NOT in CRM, instruct to register at Tata Capital
+        if phone and (state.get('not_in_crm') or extracted_info.get('not_in_crm')):
+            eligibility_path = 'REGISTER'
+            next_stage = 'completed'
+            response = (
+                "We couldn't find your profile with that number. "
+                "Please register with Tata Capital to create your customer profile before applying: "
+                "https://www.tatacapital.com/"
+            )
+
+        elif phone and amount:
+            db = load_db()
+            record = db.get(str(phone))
+            # Pull authoritative values from CRM if available
+            limit = (record or {}).get('approved_amount', state.get('pre_approved_limit', 0)) or 0
+            credit_score = (record or {}).get('credit_score', state.get('credit_score')) or 0
+            blacklisted = (record or {}).get('blacklisted', False)
+            doc_uploaded = bool(state.get('document_uploaded'))
+
+            # Fast-track: amount <= limit
+            if amount <= limit:
+                # Fraud check
+                fraud_status = fraud_agent(record)
+                if fraud_status == "Blacklisted" or blacklisted:
+                    eligibility_path = 'MANUAL_REVIEW'
+                    next_stage = 'completed'
+                    response = (
+                        "🔍 Your application requires manual review due to a risk flag. "
+                        "Our specialist team will contact you within 24 hours."
+                    )
+                else:
+                    eligibility_path = 'FAST_TRACK'
+                    next_stage = 'approved'
+                    # Ask for tenure preference; do not show letters in chat
+                    tenure_options = (
+                        "\n\n🎉 Congratulations! You're instantly approved.\n\n"
+                        "Choose an EMI tenure to proceed:\n"
+                        "- 24 months (2 years)\n"
+                        "- 36 months (3 years)\n"
+                        "- 48 months (4 years)\n"
+                        "- 60 months (5 years) - Recommended\n"
+                        "- 72 months (6 years)\n\n"
+                        "You can download your sanction letter from the sidebar once finalized."
+                    )
+                    response = tenure_options
+
+            else:
+                # Secondary check: amount <= 2x limit OR credit_score >= 700
+                within_2x = (limit > 0 and amount <= 2 * limit)
+                strong_score = (credit_score >= 700)
+
+                if within_2x or strong_score:
+                    eligibility_path = 'CONDITIONAL'
+                    if not doc_uploaded:
+                        next_stage = 'document_needed'
+                        response = (
+                            "⚠️ Your request is eligible for conditional approval.\n"
+                            "Please upload your latest salary slip in the sidebar to proceed."
+                        )
+                    else:
+                        # With docs uploaded, run fraud and finalize
+                        fraud_status = fraud_agent(record)
+                        if fraud_status == "Blacklisted" or blacklisted:
+                            eligibility_path = 'MANUAL_REVIEW'
+                            next_stage = 'completed'
+                            response = (
+                                "🔍 Your documents are received, but your application requires manual review due to a risk flag. "
+                                "We will get back to you within 24 hours."
+                            )
+                        else:
+                            next_stage = 'completed'
+                            response = (
+                                "✅ Conditional approval granted. \n"
+                                "You can download your sanction letter (PDF) from the sidebar."
+                            )
+                else:
+                    # Hard rejection path
+                    eligibility_path = 'HARD_REJECT'
+                    next_stage = 'completed'
+                    response = (
+                        "❌ We cannot approve this request.\n"
+                        "Requested amount exceeds permitted limits and profile doesn't meet criteria."
+                    )
         
+        # If loan is approved, don't add letter/EMI to chat - keep it conversational
+        if next_stage == 'approved' or (extracted_info.get('requested_amount') and state.get('pre_approved_limit') and extracted_info.get('requested_amount') <= state.get('pre_approved_limit')):
+            next_stage = 'approved'
+            
+            # Calculate EMI (assuming basic calculation: 8.5% annual interest, 5-year tenure)
+            loan_amount = state.get('requested_amount', 0) or extracted_info.get('requested_amount', 0)
+            if loan_amount > 0:
+                # EMI formula: P * r * (1+r)^n / ((1+r)^n - 1)
+                # where P = loan amount, r = monthly rate, n = number of months
+                monthly_rate = 8.5 / 100 / 12  # 8.5% annual = monthly rate
+                num_months = 60  # 5 years default
+                emi = (loan_amount * monthly_rate * (1 + monthly_rate) ** num_months) / ((1 + monthly_rate) ** num_months - 1)
+                
+                approval_context = {
+                    'customer_name': state.get('customer_name', 'Valued Customer'),
+                    'phone': state.get('phone', ''),
+                    'requested_amount': loan_amount,
+                    'pre_approved_limit': state.get('pre_approved_limit', 0),
+                    'income': state.get('income', 0),
+                    'credit_score': state.get('credit_score', 750),
+                    'emi': emi,
+                    'interest_rate': 8.5,
+                    'tenure': num_months,
+                    'reference_id': f"LOAN{state.get('phone', 'XXXXX')}"
+                }
+                
+                # Store approval context in state for sidebar to use
+                state['approval_context'] = approval_context
+                
+                # Keep chat conversational - ask about EMI preferences instead of showing full letter
+                tenure_options = """
+
+**EMI Options (Select your preferred tenure):**
+- 24 months (2 years)
+- 36 months (3 years)
+- 48 months (4 years)
+- 60 months (5 years) - *Recommended*
+- 72 months (6 years)
+
+Which tenure would work best for you? Once you select, I'll show you the exact EMI and you can download your approval letter from the sidebar.
+"""
+                response = f"{response}\n{tenure_options}"
+        
+
         return {
             'message': response.strip(),
             'detected_language': detected_language,
             'conversation_stage': next_stage,
+            'eligibility_path': eligibility_path,
             **extracted_info  # Include phone, amount, name, etc. if extracted
         }
     
@@ -398,25 +563,14 @@ def _extract_information(user_input: str, state: Dict[str, Any],
 def _extract_all_information(user_input: str, state: Dict[str, Any], language: str) -> Dict[str, Any]:
     """
     Extract ALL possible information from user input, not stage-dependent.
-    Opportunistically extracts: name, phone, amount, income, etc.
+    Opportunistically extracts: phone, amount, income, etc. (NO NAMES)
     """
     import re
     extracted = {}
     user_lower = user_input.lower()
     
-    # Extract name: "My name is John" or "I'm John" or "Call me John"
-    if not state.get('customer_name'):
-        name_patterns = [
-            r"(?:my )?name is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
-            r"i'?m\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
-            r"call me\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
-            r"you can call me\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)"
-        ]
-        for pattern in name_patterns:
-            match = re.search(pattern, user_input)
-            if match:
-                extracted['customer_name'] = match.group(1)
-                break
+    # DO NOT EXTRACT NAMES - use reference numbers only
+    # Names will only come from phone verification in CRM lookup
     
     # Extract phone number (10 digits)
     if not state.get('phone'):
@@ -428,11 +582,17 @@ def _extract_all_information(user_input: str, state: Dict[str, Any], language: s
                 ver_status, record = verification_agent(phone, db)
                 if record:
                     extracted['phone'] = phone
-                    extracted['customer_name'] = record.get('name', extracted.get('customer_name', ''))
+                    # Store name from CRM for internal use only (don't address customer by name)
+                    extracted['customer_name'] = record.get('name', '')
                     extracted['credit_score'] = record.get('credit_score', 700)
                     extracted['pre_approved_limit'] = record.get('approved_amount', 500000)
                     extracted['income'] = record.get('income', 50000)
                     extracted['verified'] = True
+                else:
+                    # Phone provided but not found in CRM
+                    extracted['phone'] = phone
+                    extracted['verified'] = False
+                    extracted['not_in_crm'] = True
             except:
                 extracted['phone'] = phone
     
@@ -516,14 +676,25 @@ def _determine_missing_info(state: Dict[str, Any], extracted_info: Dict[str, Any
     combined = {**state, **extracted_info}
     missing = []
     
-    if not combined.get('customer_name'):
-        missing.append("- Customer's name")
+    # Check if customer is pre-approved and amount is within limit
+    phone = combined.get('phone')
+    amount = combined.get('requested_amount')
+    pre_approved_limit = combined.get('pre_approved_limit')
     
+    # If we have phone and amount, and amount is within pre-approved limit, approve immediately
+    if phone and amount and pre_approved_limit and amount <= pre_approved_limit:
+        return "- Customer is PRE-APPROVED! No additional documents needed."
+    
+    # Otherwise check what's missing
     if not combined.get('phone'):
         missing.append("- Phone number for verification")
     
     if not combined.get('requested_amount'):
         missing.append("- Loan amount needed")
+    
+    # If amount exceeds pre-approved limit, request documents
+    if amount and pre_approved_limit and amount > pre_approved_limit:
+        missing.append("- Salary slip (amount exceeds pre-approved limit)")
     
     return "\n".join(missing) if missing else "- All information collected"
 
@@ -541,18 +712,62 @@ def _get_adaptive_system_prompt(language: str, state: Dict[str, Any],
                                 extracted_info: Dict[str, Any], missing_info: str) -> str:
     """Get adaptive system prompt based on conversation state."""
     
-    return f"""You are BankGPT, a friendly and professional loan officer. 
-You help customers apply for personal loans quickly and easily.
+    # Check if customer is pre-approved for the amount
+    combined = {**state, **extracted_info}
+    phone = combined.get('phone')
+    amount = combined.get('requested_amount')
+    pre_approved_limit = combined.get('pre_approved_limit')
+    
+    approval_status = ""
+    if phone and amount and pre_approved_limit:
+        if amount <= pre_approved_limit:
+            approval_status = f"""
+IMPORTANT: This customer is PRE-APPROVED!
+- Requested Amount: ₹{amount:,}
+- Pre-approved Limit: ₹{pre_approved_limit:,}
+- Status: INSTANTLY APPROVED - No documents needed!
+
+You MUST congratulate them on approval and provide EMI details immediately."""
+        else:
+            approval_status = f"""
+NOTICE: Amount exceeds pre-approved limit
+- Requested Amount: ₹{amount:,}
+- Pre-approved Limit: ₹{pre_approved_limit:,}
+- Status: Needs salary slip verification"""
+    
+    return f"""You are BankGPT, a professional loan officer. 
+You help customers apply for personal loans quickly and efficiently.
+
+{approval_status}
 
 Key guidelines:
-1. Be conversational and natural - don't rigidly follow a script
-2. If customer mentions their loan need, explore it naturally
-3. Extract information opportunistically (don't ask rigidly for phone then amount then income)
-4. If customer provides unexpected information (like income when asked about amount), acknowledge it and use it
-5. If they go off-topic, politely redirect: "That sounds great! Let's get your loan application started."
-6. Be warm, encouraging, and professional
-7. If they ask questions, answer helpfully
-8. Don't ask for information they already provided
+1. Be professional and direct - focus only on loan processing
+2. Do NOT ask for customer names - identify customers by phone numbers only
+3. Do NOT offer phone calls or ask if they prefer phone vs online - handle everything through chat
+4. If customer is pre-approved (amount ≤ pre-approved limit), APPROVE IMMEDIATELY - no documents needed
+5. If they go off-topic, politely redirect: "Let me help you with your loan application."
+6. Be helpful but concise
+7. Don't ask for information they already provided
+8. ASK FOR INFORMATION SEQUENTIALLY - one piece at a time
+9. If customer asks for human representative, politely decline and let them know the chatbot does not support it.
+
+SEQUENTIAL INFORMATION GATHERING:
+- FIRST: Ask for phone number for verification (if not provided)
+- SECOND: After phone is verified, ask for loan amount (if not provided)
+- THIRD: Process approval based on pre-approved limit
+
+CRITICAL APPROVAL RULES:
+- If Requested Amount ≤ Pre-approved Limit: INSTANTLY APPROVE (no documents)
+- If Requested Amount > Pre-approved Limit: Request salary slip only
+- Never ask for documents from pre-approved customers within their limit
+
+IMPORTANT RESTRICTIONS:
+- Never ask for multiple pieces of information in one message
+- Ask for phone number FIRST, wait for response, then ask for amount
+- Never ask "would you prefer to do everything online or via phone call"
+- Never ask "Can you tell me your name" 
+- Only ask for phone number for verification purposes
+- Keep responses focused on loan processing only
 
 Language: {'Hindi/Hinglish mix' if language == 'hindi' else 'English'}"""
 
